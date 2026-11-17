@@ -1,5 +1,7 @@
 # Adjustables
 
+[Live demo](https://ja2gc.github.io/adjustables/)
+
 
 ## Instructions
 
