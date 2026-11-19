@@ -713,6 +713,13 @@
 <script>
 const API = 'https://adjustables.onrender.com/api';
 
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+}
+
+
 //  AUTH STATE 
 let authToken = localStorage.getItem('at_token') || null;
 let currentUser = JSON.parse(localStorage.getItem('at_user') || 'null');
@@ -869,13 +876,13 @@ function productCardHTML(p) {
   return `
   <div class="product-card" onclick="showProductDetail(${p.id})">
     <div class="product-img">
-      <img src="${p.img}" alt="${p.name}" loading="lazy" onerror="this.style.display='none'">
-      ${p.badge ? `<div class="product-badge">${p.badge}</div>` : ''}
+      <img src="${p.img}" alt="${escapeHTML(p.name)}" loading="lazy" onerror="this.style.display='none'">
+      ${p.badge ? `<div class="product-badge">${escapeHTML(p.badge)}</div>` : ''}
     </div>
     <div class="product-info">
       <div class="product-category">${p.category.replace('-',' ')}</div>
-      <div class="product-name">${p.name}</div>
-      <p class="product-desc">${p.description}</p>
+      <div class="product-name">${escapeHTML(p.name)}</div>
+      <p class="product-desc">${escapeHTML(p.description)}</p>
       <div class="product-footer">
         <div>
           <div class="product-price">$${p.price}</div>
@@ -905,20 +912,20 @@ function showProductDetail(id) {
   document.getElementById('detail-content').innerHTML = `
     <div>
       <div class="detail-img-main" style="overflow:hidden;padding:0">
-        <img id="detail-main-img" src="${p.imgs[0]}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius)">
+        <img id="detail-main-img" src="${p.imgs[0]}" alt="${escapeHTML(p.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius)">
       </div>
       <div class="detail-img-thumbs">
         ${p.imgs.map((src,i) => `<div class="detail-img-thumb ${i===0?'active':''}" onclick="switchDetailImg('${src}',this)" style="padding:0;overflow:hidden">
-          <img src="${src}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;" loading="lazy">
+          <img src="${src}" alt="${escapeHTML(p.name)}" style="width:100%;height:100%;object-fit:cover;" loading="lazy">
         </div>`).join('')}
       </div>
     </div>
     <div>
       <div class="detail-category">${p.category.replace('-',' ')}</div>
-      <h1 class="detail-title">${p.name}</h1>
+      <h1 class="detail-title">${escapeHTML(p.name)}</h1>
       <div class="detail-rating"><span class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</span> ${p.rating} &middot; <span style="color:var(--gray-400)">${p.reviews} reviews</span></div>
       <div class="detail-price">$${p.price}</div>
-      <p class="detail-desc">${p.description}</p>
+      <p class="detail-desc">${escapeHTML(p.description)}</p>
       <div class="detail-features">${(p.features||[]).map(f => `<div class="detail-feature">${f}</div>`).join('')}</div>
       <div class="detail-qty">
         <span style="font-size:0.85rem;color:var(--gray-600)">Quantity:</span>
@@ -956,12 +963,12 @@ async function loadProductReviews(pid) {
     <div class="review-card">
       <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:10px">
         <div>
-          <strong style="font-size:0.9rem">${rv.user_name}</strong>
+          <strong style="font-size:0.9rem">${escapeHTML(rv.user_name)}</strong>
           <div class="review-stars" style="margin-top:2px">${'★'.repeat(rv.rating)}</div>
         </div>
-        <span style="font-size:0.75rem;color:var(--gray-400)">${rv.created_at?.slice(0,10)}</span>
+        <span style="font-size:0.75rem;color:var(--gray-400)">${escapeHTML(rv.created_at?.slice(0,10))}</span>
       </div>
-      <p style="font-size:0.85rem;color:var(--gray-600)">${rv.comment}</p>
+      <p style="font-size:0.85rem;color:var(--gray-600)">${escapeHTML(rv.comment)}</p>
     </div>`).join('');
   if (authToken) grid.innerHTML += reviewFormHTML(pid);
 }
@@ -1025,7 +1032,7 @@ async function addConfigToCart() {
   const total = configState.basePrice + configState.materialPrice + configState.heightPrice + configState.sizePrice + configState.accPrice;
   const name = `Custom Desk (${configState.material}, ${configState.size})`;
   if (authToken) {
-    const r = await apiFetch('/cart', { method:'POST', body: JSON.stringify({ product_id: 'custom-'+Date.now(), product_name: name, price: total, qty: 1, variant: configState.color, custom: true }) });
+    const r = await apiFetch('/cart', { method:'POST', body: JSON.stringify({ product_id: 'custom-'+Date.now(), product_name: name, price: total, qty: 1, variant: configState.color, custom: true, config: { material: configState.material, height: configState.height, size: configState.size, accessories: configState.accessories.map(a => a.name) } }) });
     if (!r.ok) { showToast(r.data.error || 'Failed to add'); return; }
     await loadCartFromServer();
   } else {
@@ -1063,11 +1070,11 @@ function renderCartDrawer() {
     const imgSrc = item.img || (PRODUCTS.find(p => String(p.id) === String(item.id))?.img || '');
     return `<div style="display:grid;grid-template-columns:64px 1fr auto;gap:12px;align-items:start;padding:14px 0;border-bottom:1px solid var(--gray-100);">
       <div style="width:64px;height:64px;border-radius:8px;overflow:hidden;background:var(--gray-100)">
-        ${imgSrc ? `<img src="${imgSrc}" style="width:100%;height:100%;object-fit:cover;">` : '<div style="width:100%;height:100%;background:var(--gray-100)"></div>'}
+        ${imgSrc ? `<img src="${escapeHTML(imgSrc)}" style="width:100%;height:100%;object-fit:cover;">` : '<div style="width:100%;height:100%;background:var(--gray-100)"></div>'}
       </div>
       <div>
-        <div style="font-weight:600;font-size:0.9rem;margin-bottom:2px">${item.name}</div>
-        ${item.variant ? `<div style="font-size:0.75rem;color:var(--gray-400)">Color: ${item.variant}</div>` : ''}
+        <div style="font-weight:600;font-size:0.9rem;margin-bottom:2px">${escapeHTML(item.name)}</div>
+        ${item.variant ? `<div style="font-size:0.75rem;color:var(--gray-400)">Color: ${escapeHTML(item.variant)}</div>` : ''}
         <div style="font-size:0.8rem;color:var(--gray-400);margin-bottom:8px">$${item.price.toFixed(2)} each</div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button onclick="drawerQty(${idx},-1)" style="width:24px;height:24px;border:1.5px solid var(--gray-200);border-radius:4px;background:none;cursor:pointer;">&#8722;</button>
@@ -1140,13 +1147,13 @@ function renderCheckoutStep() {
       ${stepperHTML(1)}
       <div style="font-weight:700;font-size:0.95rem;margin-bottom:14px;">Delivery Information</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-        <div><label style="font-size:0.8rem;color:var(--gray-600)">First Name</label><input style="${iStyle}" id="co-fname" value="${checkoutData.firstName}" placeholder="Juan"></div>
-        <div><label style="font-size:0.8rem;color:var(--gray-600)">Last Name</label><input style="${iStyle}" id="co-lname" value="${checkoutData.lastName}" placeholder="dela Cruz"></div>
+        <div><label style="font-size:0.8rem;color:var(--gray-600)">First Name</label><input style="${iStyle}" id="co-fname" value="${escapeHTML(checkoutData.firstName)}" placeholder="Juan"></div>
+        <div><label style="font-size:0.8rem;color:var(--gray-600)">Last Name</label><input style="${iStyle}" id="co-lname" value="${escapeHTML(checkoutData.lastName)}" placeholder="dela Cruz"></div>
       </div>
-      <div style="margin-bottom:12px;"><label style="font-size:0.8rem;color:var(--gray-600)">Address</label><input style="${iStyle}" id="co-addr" value="${checkoutData.address}" placeholder="123 Main St, Makati City"></div>
+      <div style="margin-bottom:12px;"><label style="font-size:0.8rem;color:var(--gray-600)">Address</label><input style="${iStyle}" id="co-addr" value="${escapeHTML(checkoutData.address)}" placeholder="123 Main St, Makati City"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
-        <div><label style="font-size:0.8rem;color:var(--gray-600)">City</label><input style="${iStyle}" id="co-city" value="${checkoutData.city}" placeholder="Makati"></div>
-        <div><label style="font-size:0.8rem;color:var(--gray-600)">ZIP Code</label><input style="${iStyle}" id="co-zip" value="${checkoutData.zip}" placeholder="1200"></div>
+        <div><label style="font-size:0.8rem;color:var(--gray-600)">City</label><input style="${iStyle}" id="co-city" value="${escapeHTML(checkoutData.city)}" placeholder="Makati"></div>
+        <div><label style="font-size:0.8rem;color:var(--gray-600)">ZIP Code</label><input style="${iStyle}" id="co-zip" value="${escapeHTML(checkoutData.zip)}" placeholder="1200"></div>
       </div>
       <div style="font-weight:700;font-size:0.95rem;margin-bottom:12px;">Shipping Method</div>
       ${[['standard','Standard Delivery','5–7 business days','Free'],['express','Express Delivery','2–3 business days','$29'],['pickup','Store Pickup','Ready in 24 hours','Free']].map(([val,label,sub,cost]) => `
@@ -1187,7 +1194,7 @@ function renderCheckoutStep() {
       <div style="text-align:center;padding:20px 0 32px;">
         <div style="width:56px;height:56px;background:#22c55e;border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:1.6rem;color:#fff;">&#10003;</div>
         <h2 style="font-family:'Playfair Display',serif;font-size:1.8rem;margin-bottom:10px;">Order Confirmed!</h2>
-        <div style="display:inline-block;background:var(--gray-100);border-radius:6px;padding:6px 16px;font-family:'DM Mono',monospace;font-size:0.85rem;margin-bottom:16px;">Order #${ref}</div>
+        <div style="display:inline-block;background:var(--gray-100);border-radius:6px;padding:6px 16px;font-family:'DM Mono',monospace;font-size:0.85rem;margin-bottom:16px;">Order #${escapeHTML(ref)}</div>
         <p style="color:var(--gray-600);font-size:0.9rem;max-width:320px;margin:0 auto 28px;">Thank you for your order! You'll receive a confirmation email shortly. Your ergonomic workspace is on its way.</p>
         <button class="btn btn-primary btn-lg" onclick="closeCheckout();showPage('profile')">View My Orders</button>
       </div>`;
@@ -1313,9 +1320,9 @@ async function renderCustomerDashboard(container) {
   <div class="profile-layout" style="padding:48px 0">
     <div>
       <div class="profile-sidebar">
-        <div class="profile-avatar">${currentUser.name.charAt(0).toUpperCase()}</div>
-        <div class="profile-name">${currentUser.name}</div>
-        <div class="profile-email">${currentUser.email}</div>
+        <div class="profile-avatar">${escapeHTML(currentUser.name.charAt(0).toUpperCase())}</div>
+        <div class="profile-name">${escapeHTML(currentUser.name)}</div>
+        <div class="profile-email">${escapeHTML(currentUser.email)}</div>
         <div style="display:inline-block;background:var(--green-light);color:var(--green);font-size:0.7rem;font-weight:700;padding:3px 10px;border-radius:100px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:20px;">Customer</div>
         <div class="profile-nav">
           <div class="profile-nav-item ${profileTab==='orders'?'active':''}" onclick="switchProfileTab('orders')">My Orders</div>
@@ -1342,7 +1349,7 @@ async function loadProfileTab(tab) {
   if (tab === 'orders') {
     el.innerHTML = '<div style="color:var(--gray-400);padding:20px">Loading orders...</div>';
     const r = await apiFetch('/orders/my');
-    if (!r.ok) { el.innerHTML = `<div style="color:var(--red);padding:20px">${r.data.error}</div>`; return; }
+    if (!r.ok) { el.innerHTML = `<div style="color:var(--red);padding:20px">${escapeHTML(r.data.error)}</div>`; return; }
     const orders = r.data;
     if (!orders.length) {
       el.innerHTML = '<div class="empty-state"><div class="empty-icon" style="font-size:3rem">&#128230;</div><h3>No orders yet</h3><p>Your orders will appear here after you shop.</p></div>';
@@ -1352,14 +1359,14 @@ async function loadProfileTab(tab) {
     el.innerHTML = orders.map(o => `
       <div class="order-card">
         <div class="order-header">
-          <span class="order-id">#${o.order_ref}</span>
+          <span class="order-id">#${escapeHTML(o.order_ref)}</span>
           <div style="display:flex;align-items:center;gap:12px">
-            <span style="font-size:0.82rem;color:var(--gray-400)">${o.created_at?.slice(0,10)}</span>
-            <span class="order-status tag ${statusMap[o.status]||''}">${o.status}</span>
+            <span style="font-size:0.82rem;color:var(--gray-400)">${escapeHTML(o.created_at?.slice(0,10))}</span>
+            <span class="order-status tag ${statusMap[o.status]||''}">${escapeHTML(o.status)}</span>
           </div>
         </div>
         <div class="order-body">
-          ${o.items.slice(0,2).map(i => `<div style="font-size:0.85rem;margin-bottom:4px">${i.product_name} &times;${i.qty}</div>`).join('')}
+          ${o.items.slice(0,2).map(i => `<div style="font-size:0.85rem;margin-bottom:4px">${escapeHTML(i.product_name)} &times;${i.qty}</div>`).join('')}
           ${o.items.length>2 ? `<div style="font-size:0.82rem;color:var(--gray-400)">+${o.items.length-2} more</div>` : ''}
           <div style="font-weight:700;margin-top:8px;font-family:'Playfair Display',serif;">$${parseFloat(o.total).toFixed(2)}</div>
           <div class="order-tracking">
@@ -1386,9 +1393,9 @@ async function loadProfileTab(tab) {
     const wishItems = PRODUCTS.filter(p => wishlist.includes(p.id));
     el.innerHTML = wishItems.length ? `<div class="wishlist-grid">${wishItems.map(p => `
       <div class="wishlist-item">
-        <div class="wishlist-img" style="overflow:hidden;padding:0"><img src="${p.img}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;"></div>
+        <div class="wishlist-img" style="overflow:hidden;padding:0"><img src="${p.img}" alt="${escapeHTML(p.name)}" style="width:100%;height:100%;object-fit:cover;"></div>
         <div class="wishlist-info">
-          <div class="wishlist-name">${p.name}</div>
+          <div class="wishlist-name">${escapeHTML(p.name)}</div>
           <div class="wishlist-price">$${p.price}</div>
           <button class="btn btn-primary btn-sm btn-full" style="margin-top:8px" onclick="addToCart(${p.id})">Add to Cart</button>
         </div>
@@ -1400,10 +1407,10 @@ async function loadProfileTab(tab) {
     const user = r.ok ? r.data : currentUser;
     el.innerHTML = `
       <h3 style="margin-bottom:20px;font-family:'Playfair Display',serif">Account Settings</h3>
-      <div class="input-group" style="margin-bottom:16px"><label>Full Name</label><input type="text" id="s-name" value="${user.name||''}"></div>
-      <div class="input-group" style="margin-bottom:16px"><label>Email <span style="color:var(--gray-400);font-size:0.78rem">(cannot change)</span></label><input type="email" value="${user.email||''}" disabled style="background:var(--gray-50);color:var(--gray-400)"></div>
-      <div class="input-group" style="margin-bottom:16px"><label>Phone</label><input type="tel" id="s-phone" value="${user.phone||''}" placeholder="(555) 000-0000"></div>
-      <div class="input-group" style="margin-bottom:20px"><label>Address</label><input type="text" id="s-addr" value="${user.address||''}" placeholder="123 Main St, City"></div>
+      <div class="input-group" style="margin-bottom:16px"><label>Full Name</label><input type="text" id="s-name" value="${escapeHTML(user.name||'')}"></div>
+      <div class="input-group" style="margin-bottom:16px"><label>Email <span style="color:var(--gray-400);font-size:0.78rem">(cannot change)</span></label><input type="email" value="${escapeHTML(user.email||'')}" disabled style="background:var(--gray-50);color:var(--gray-400)"></div>
+      <div class="input-group" style="margin-bottom:16px"><label>Phone</label><input type="tel" id="s-phone" value="${escapeHTML(user.phone||'')}" placeholder="(555) 000-0000"></div>
+      <div class="input-group" style="margin-bottom:20px"><label>Address</label><input type="text" id="s-addr" value="${escapeHTML(user.address||'')}" placeholder="123 Main St, City"></div>
       <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
       <div class="divider"></div>
       <h4 style="margin-bottom:16px;font-family:'Playfair Display',serif">Change Password</h4>
@@ -1457,7 +1464,7 @@ async function loadAdminDashboard() {
   const container = document.getElementById('admin-content');
   container.innerHTML = '<div style="padding:32px;color:var(--gray-400)">Loading...</div>';
   const r = await apiFetch('/admin/stats');
-  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${r.data.error||'Failed to load stats'}</div>`; return; }
+  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${escapeHTML(r.data.error||'Failed to load stats')}</div>`; return; }
   const s = r.data;
   container.innerHTML = `
   <div class="admin-main">
@@ -1473,11 +1480,11 @@ async function loadAdminDashboard() {
       <table>
         <thead><tr><th>Order Ref</th><th>Customer</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
         <tbody>${s.recentOrders.map(o => `<tr>
-          <td style="font-family:'DM Mono',monospace;font-size:0.82rem">#${o.order_ref}</td>
-          <td>${o.user_name}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:0.82rem">#${escapeHTML(o.order_ref)}</td>
+          <td>${escapeHTML(o.user_name)}</td>
           <td>$${parseFloat(o.total).toFixed(2)}</td>
-          <td><span class="tag ${o.status==='Delivered'?'tag-green':o.status==='Processing'?'tag-amber':'tag-red'}">${o.status}</span></td>
-          <td style="font-size:0.82rem;color:var(--gray-400)">${o.created_at?.slice(0,10)}</td>
+          <td><span class="tag ${o.status==='Delivered'?'tag-green':o.status==='Processing'?'tag-amber':'tag-red'}">${escapeHTML(o.status)}</span></td>
+          <td style="font-size:0.82rem;color:var(--gray-400)">${escapeHTML(o.created_at?.slice(0,10))}</td>
         </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:40px">No orders yet</td></tr>'}</tbody>
       </table>
     </div>
@@ -1488,7 +1495,7 @@ async function loadAdminProducts() {
   const container = document.getElementById('admin-content');
   container.innerHTML = '<div style="padding:32px;color:var(--gray-400)">Loading...</div>';
   const r = await apiFetch('/products');
-  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${r.data.error}</div>`; return; }
+  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${escapeHTML(r.data.error)}</div>`; return; }
   container.innerHTML = `
   <div class="admin-main">
     <div class="admin-header">
@@ -1520,10 +1527,10 @@ async function loadAdminProducts() {
         <thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Rating</th><th>Actions</th></tr></thead>
         <tbody>${r.data.map(p => `<tr>
           <td style="display:flex;align-items:center;gap:8px;">
-            <img src="${p.img_url}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'">
-            <span>${p.name}</span>
+            <img src="${escapeHTML(p.img_url)}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'">
+            <span>${escapeHTML(p.name)}</span>
           </td>
-          <td>${p.category}</td>
+          <td>${escapeHTML(p.category)}</td>
           <td>$${p.price}</td>
           <td>${p.stock}</td>
           <td>&#9733; ${p.rating}</td>
@@ -1581,7 +1588,7 @@ async function loadAdminOrders() {
   const container = document.getElementById('admin-content');
   container.innerHTML = '<div style="padding:32px;color:var(--gray-400)">Loading...</div>';
   const r = await apiFetch('/admin/orders');
-  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${r.data.error}</div>`; return; }
+  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${escapeHTML(r.data.error)}</div>`; return; }
   container.innerHTML = `
   <div class="admin-main">
     <div class="admin-header"><h2 style="font-family:'Playfair Display',serif">Orders</h2></div>
@@ -1589,12 +1596,12 @@ async function loadAdminOrders() {
       <table>
         <thead><tr><th>Order Ref</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>${r.data.map(o => `<tr>
-          <td style="font-family:'DM Mono',monospace;font-size:0.82rem">#${o.order_ref}</td>
-          <td><div style="font-weight:600">${o.user_name}</div><div style="font-size:0.75rem;color:var(--gray-400)">${o.user_email}</div></td>
+          <td style="font-family:'DM Mono',monospace;font-size:0.82rem">#${escapeHTML(o.order_ref)}</td>
+          <td><div style="font-weight:600">${escapeHTML(o.user_name)}</div><div style="font-size:0.75rem;color:var(--gray-400)">${escapeHTML(o.user_email)}</div></td>
           <td>${o.items.length} item${o.items.length!==1?'s':''}</td>
           <td>$${parseFloat(o.total).toFixed(2)}</td>
-          <td style="font-size:0.82rem;text-transform:capitalize">${o.payment}</td>
-          <td><span class="tag ${o.status==='Delivered'?'tag-green':o.status==='Processing'?'tag-amber':o.status==='Cancelled'?'tag-red':''}">${o.status}</span></td>
+          <td style="font-size:0.82rem;text-transform:capitalize">${escapeHTML(o.payment)}</td>
+          <td><span class="tag ${o.status==='Delivered'?'tag-green':o.status==='Processing'?'tag-amber':o.status==='Cancelled'?'tag-red':''}">${escapeHTML(o.status)}</span></td>
           <td><select onchange="updateOrderStatus(${o.id},this.value)" style="border:1px solid var(--gray-200);border-radius:6px;padding:4px 8px;font-size:0.8rem;cursor:pointer;background:transparent">
             ${['Processing','Shipped','Delivered','Cancelled'].map(s => `<option value="${s}" ${o.status===s?'selected':''}>${s}</option>`).join('')}
           </select></td>
@@ -1614,7 +1621,7 @@ async function loadAdminUsers() {
   const container = document.getElementById('admin-content');
   container.innerHTML = '<div style="padding:32px;color:var(--gray-400)">Loading...</div>';
   const r = await apiFetch('/admin/users');
-  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${r.data.error}</div>`; return; }
+  if (!r.ok) { container.innerHTML = `<div style="padding:32px;color:var(--red)">${escapeHTML(r.data.error)}</div>`; return; }
   container.innerHTML = `
   <div class="admin-main">
     <div class="admin-header"><h2 style="font-family:'Playfair Display',serif">Users</h2></div>
@@ -1622,13 +1629,13 @@ async function loadAdminUsers() {
       <table>
         <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th>Joined</th><th>Actions</th></tr></thead>
         <tbody>${r.data.map(u => `<tr>
-          <td style="font-weight:600">${u.name}</td>
-          <td style="font-size:0.85rem">${u.email}</td>
-          <td><span class="tag ${u.role==='admin'?'tag-amber':'tag-green'}">${u.role}</span></td>
-          <td style="font-size:0.82rem;color:var(--gray-400)">${u.phone||'—'}</td>
-          <td style="font-size:0.82rem;color:var(--gray-400)">${u.created_at?.slice(0,10)}</td>
+          <td style="font-weight:600">${escapeHTML(u.name)}</td>
+          <td style="font-size:0.85rem">${escapeHTML(u.email)}</td>
+          <td><span class="tag ${u.role==='admin'?'tag-amber':'tag-green'}">${escapeHTML(u.role)}</span></td>
+          <td style="font-size:0.82rem;color:var(--gray-400)">${escapeHTML(u.phone||'—')}</td>
+          <td style="font-size:0.82rem;color:var(--gray-400)">${escapeHTML(u.created_at?.slice(0,10))}</td>
           <td><div class="action-btns">
-            <button class="action-btn edit-btn" onclick="toggleUserRole(this)" data-uid="${u.id}" data-role="${u.role}">${u.role==='admin'?'Make Customer':'Make Admin'}</button>
+            <button class="action-btn edit-btn" onclick="toggleUserRole(this)" data-uid="${u.id}" data-role="${escapeHTML(u.role)}">${u.role==='admin'?'Make Customer':'Make Admin'}</button>
           </div></td>
         </tr>`).join('')}</tbody>
       </table>
@@ -1753,11 +1760,11 @@ async function renderVotes() {
     return `
     <div class="vote-card ${isVoted?'voted':''}" id="vote-${item.id}" onclick="castVote('${item.id}', ${i})">
       <div class="vote-img" style="padding:0;overflow:hidden;position:relative;">
-        <img src="${item.img}" alt="${item.name}" style="width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.35s ease;" loading="lazy">
+        <img src="${item.img}" alt="${escapeHTML(item.name)}" style="width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.35s ease;" loading="lazy">
         ${isVoted?`<div style="position:absolute;top:10px;right:10px;background:var(--black);color:#fff;font-size:0.7rem;font-weight:700;padding:4px 10px;border-radius:100px;letter-spacing:0.04em;">YOUR VOTE</div>`:''}
       </div>
       <div class="vote-info">
-        <div class="vote-name">${item.name}</div>
+        <div class="vote-name">${escapeHTML(item.name)}</div>
         <div class="vote-desc">${item.desc}</div>
         <div class="vote-bar-wrap" style="margin-top:10px;">
           <div class="vote-bar"><div class="vote-fill" style="width:${pct}%"></div></div>

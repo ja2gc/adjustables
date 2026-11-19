@@ -1,15 +1,50 @@
 from flask import Flask, request, jsonify, g
-import sqlite3, hashlib, hmac, json, base64, time, os, re
+from werkzeug.exceptions import BadRequest
+from werkzeug.security import check_password_hash, generate_password_hash
+import sqlite3, hashlib, hmac, json, base64, time, os, re, secrets, math
 
 app = Flask(__name__)
-SECRET = "adjustables_jwt_secret_2026_xK9mP"
-DB_PATH = os.path.join(os.path.dirname(__file__), "adjustables.db")
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+SECRET = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+DB_PATH = os.environ.get("DATABASE_PATH") or os.path.join(os.path.dirname(__file__), "adjustables.db")
+ALLOWED_ORIGINS = {"https://ja2gc.github.io", "https://adjustables.onrender.com",
+                   "http://localhost:5000", "http://127.0.0.1:5000"}
+
+
+@app.before_request
+def validate_json_body():
+    if request.is_json and request.get_data() and not isinstance(request.get_json(), dict):
+        raise BadRequest("Expected a JSON object")
+
+
+@app.errorhandler(BadRequest)
+def bad_request(error):
+    return jsonify({"error": "Invalid request data"}), 400
+
+
+def number(value, minimum=0, maximum=1000000, integer=False):
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise BadRequest("Invalid number") from None
+    if isinstance(value, bool) or not math.isfinite(result) or not minimum <= result <= maximum:
+        raise BadRequest("Number out of range")
+    if integer and result != int(result):
+        raise BadRequest("Expected an integer")
+    return int(result) if integer else result
 
 @app.after_request
 def add_cors(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    origin = request.headers.get("Origin")
+    if origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.vary.add("Origin")
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 @app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
@@ -111,7 +146,8 @@ def init_db():
         db.execute("INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)",
                    ("Admin","admin@adjustables.com", admin_pw, "admin"))
         db.commit()
-    except: pass
+    except sqlite3.IntegrityError:
+        db.rollback()
 
     # Seed demo customer
     cust_pw = _hash_password("demo123")
@@ -119,7 +155,8 @@ def init_db():
         db.execute("INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)",
                    ("Demo User","demo@adjustables.com", cust_pw, "customer"))
         db.commit()
-    except: pass
+    except sqlite3.IntegrityError:
+        db.rollback()
 
     # Seed products if empty
     count = db.execute("SELECT COUNT(*) FROM products").fetchone()[0]
@@ -173,7 +210,7 @@ def _b64url_decode(s):
 
 def create_token(payload: dict, expires_in=86400*7) -> str:
     header = _b64url_encode(json.dumps({"alg":"HS256","typ":"JWT"}))
-    payload["exp"] = int(time.time()) + expires_in
+    payload = {**payload, "exp": int(time.time()) + expires_in}
     body = _b64url_encode(json.dumps(payload))
     sig = _b64url_encode(hmac.new(SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest())
     return f"{header}.{body}.{sig}"
@@ -183,16 +220,29 @@ def verify_token(token: str) -> dict | None:
         parts = token.split(".")
         if len(parts) != 3: return None
         header, body, sig = parts
+        if json.loads(_b64url_decode(header)) != {"alg": "HS256", "typ": "JWT"}:
+            return None
         expected = _b64url_encode(hmac.new(SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(sig, expected): return None
         payload = json.loads(_b64url_decode(body))
-        if payload.get("exp", 0) < time.time(): return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("id"), int): return None
+        if not isinstance(payload.get("exp"), (int, float)) or not math.isfinite(payload["exp"]) or payload["exp"] <= time.time(): return None
         return payload
-    except: return None
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        return None
 
 def _hash_password(pw: str) -> str:
-    salt = "adjustables_salt_2026"
-    return hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 200000).hex()
+    return generate_password_hash(pw)
+
+
+def _check_password(stored, password):
+    if not isinstance(password, str) or len(password) > 1024:
+        return False
+    if re.fullmatch(r"[0-9a-f]{64}", stored):
+        # Upgrade existing accounts on login without changing their passwords.
+        legacy = hashlib.pbkdf2_hmac("sha256", password.encode(), b"adjustables_salt_2026", 200000).hex()
+        return hmac.compare_digest(stored, legacy)
+    return check_password_hash(stored, password)
 
 def get_current_user(required=True, admin_only=False):
     auth = request.headers.get("Authorization","")
@@ -203,17 +253,50 @@ def get_current_user(required=True, admin_only=False):
     if not payload:
         if required: return None, (jsonify({"error":"Invalid or expired token"}), 401)
         return None, None
-    if admin_only and payload.get("role") != "admin":
+    row = get_db().execute("SELECT id,name,email,role FROM users WHERE id=?", (payload["id"],)).fetchone()
+    if not row:
+        return None, (jsonify({"error":"Unauthorized"}), 401) if required else None
+    user = dict(row)
+    if admin_only and user["role"] != "admin":
         return None, (jsonify({"error":"Admin access required"}), 403)
-    return payload, None
+    return user, None
 
 #  validate
 def validate_email(email):
     return re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email or '')
 def validate_password(pw):
-    return pw and len(pw) >= 8
+    return isinstance(pw, str) and 8 <= len(pw) <= 1024
 def sanitize(s, max_len=500):
     return str(s or '')[:max_len].strip()
+
+
+def cart_product(db, pid, data):
+    if not pid.startswith("custom-"):
+        product = db.execute("SELECT name,price FROM products WHERE id=? AND active=1", (pid,)).fetchone()
+        if not product:
+            raise BadRequest("Product unavailable")
+        return product["name"], product["price"]
+
+    config = data.get("config")
+    if not isinstance(config, dict):
+        raise BadRequest("Missing desk configuration")
+    materials = {"Wood": 0, "Metal": 50, "Glass": 100, "Walnut": 150}
+    heights = {"Standard": 0, "Extended": 100}
+    sizes = {'Compact (48\")': 0, 'Compact (48″)': 0, 'Standard (60″)': 80, 'Large (72″)': 160, "L-Shape": 250}
+    accessories = {"Cable Management Tray": 49, "Monitor Arm": 149, "Under-Desk Drawer": 89,
+                   "Desk Pad": 39, "Keyboard Tray": 79}
+    material, height, size = (config.get(k) for k in ("material", "height", "size"))
+    selected = config.get("accessories", [])
+    if not all(isinstance(v, str) for v in (material, height, size)):
+        raise BadRequest("Invalid desk configuration")
+    if material not in materials or height not in heights or size not in sizes:
+        raise BadRequest("Invalid desk configuration")
+    if not isinstance(selected, list) or not all(isinstance(a, str) and a in accessories for a in selected):
+        raise BadRequest("Invalid accessories")
+    if len(selected) != len(set(selected)):
+        raise BadRequest("Duplicate accessories")
+    price = 599 + materials[material] + heights[height] + sizes[size] + sum(accessories[a] for a in selected)
+    return f"Custom Desk ({material}, {size})", price
 
  
 #  auth routes
@@ -257,13 +340,17 @@ def login():
 
     if not validate_email(email):
         return jsonify({"error":"Invalid email"}), 400
-    if not pw:
+    if not isinstance(pw, str) or not pw or len(pw) > 1024:
         return jsonify({"error":"Password required"}), 400
 
     db   = get_db()
     user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-    if not user or user["password"] != _hash_password(pw):
+    if not user or not _check_password(user["password"], pw):
         return jsonify({"error":"Invalid email or password"}), 401
+
+    if re.fullmatch(r"[0-9a-f]{64}", user["password"]):
+        db.execute("UPDATE users SET password=? WHERE id=?", (_hash_password(pw), user["id"]))
+        db.commit()
 
     token = create_token({"id":user["id"],"name":user["name"],"email":user["email"],"role":user["role"]})
     return jsonify({"token":token, "user":{"id":user["id"],"name":user["name"],"email":user["email"],"role":user["role"]}})
@@ -309,7 +396,7 @@ def change_password():
 
     db  = get_db()
     row = db.execute("SELECT password FROM users WHERE id=?", (user["id"],)).fetchone()
-    if not row or row["password"] != _hash_password(old_pw):
+    if not row or not _check_password(row["password"], old_pw):
         return jsonify({"error":"Current password is incorrect"}), 401
 
     db.execute("UPDATE users SET password=? WHERE id=?", (_hash_password(new_pw), user["id"]))
@@ -352,7 +439,7 @@ def add_review(pid):
     user, err = get_current_user()
     if err: return err
     data    = request.get_json() or {}
-    rating  = int(data.get("rating", 0))
+    rating  = number(data.get("rating", 0), 1, 5, integer=True)
     comment = sanitize(data.get("comment",""), 1000)
     if not (1 <= rating <= 5):
         return jsonify({"error":"Rating must be 1–5"}), 400
@@ -388,21 +475,23 @@ def add_to_cart():
     data = request.get_json() or {}
     pid  = sanitize(data.get("product_id",""), 50)
     name = sanitize(data.get("product_name",""), 200)
-    price= float(data.get("price", 0))
-    qty  = max(1, int(data.get("qty", 1)))
+    price= number(data.get("price", 0), 0.01)
+    qty  = number(data.get("qty", 1), 1, 1000, integer=True)
     variant = sanitize(data.get("variant",""), 100)
-    custom  = 1 if data.get("custom") else 0
+    custom  = int(pid.startswith("custom-"))
 
     if not pid or not name or price <= 0:
         return jsonify({"error":"Invalid cart item"}), 400
 
     db = get_db()
+    name, price = cart_product(db, pid, data)
     existing = db.execute(
         "SELECT id,qty FROM cart WHERE user_id=? AND product_id=?",
         (user["id"], pid)
     ).fetchone()
     if existing:
-        db.execute("UPDATE cart SET qty=? WHERE id=?", (existing["qty"] + qty, existing["id"]))
+        quantity = number(existing["qty"] + qty, 1, 1000, integer=True)
+        db.execute("UPDATE cart SET qty=? WHERE id=?", (quantity, existing["id"]))
     else:
         db.execute(
             "INSERT INTO cart (user_id,product_id,product_name,price,qty,variant,custom) VALUES (?,?,?,?,?,?,?)",
@@ -417,7 +506,7 @@ def update_cart_item(cart_id):
     user, err = get_current_user()
     if err: return err
     data = request.get_json() or {}
-    qty  = int(data.get("qty", 1))
+    qty  = number(data.get("qty", 1), 0, 1000, integer=True)
     db   = get_db()
     item = db.execute("SELECT * FROM cart WHERE id=? AND user_id=?", (cart_id, user["id"])).fetchone()
     if not item: return jsonify({"error":"Cart item not found"}), 404
@@ -457,18 +546,35 @@ def place_order():
     address = sanitize(data.get("address",""), 500)
     payment = sanitize(data.get("payment","cod"), 50)
     ship_m  = sanitize(data.get("shipping_method","standard"), 50)
-    shipping= float(data.get("shipping", 0))
+    if ship_m not in {"standard", "express", "pickup"} or payment not in {"cod", "gcash", "maya", "card"}:
+        raise BadRequest("Invalid checkout option")
+    shipping = 29 if ship_m == "express" else 0
 
-    if not items:
+    if not isinstance(items, list) or not items or len(items) > 100:
         return jsonify({"error":"No items in order"}), 400
     if not address:
         return jsonify({"error":"Delivery address required"}), 400
 
-    subtotal = sum(float(i.get("price",0)) * int(i.get("qty",1)) for i in items)
-    total    = subtotal + shipping
-    ref      = f"AT-{int(time.time())}"
-
     db = get_db()
+    verified_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise BadRequest("Invalid order item")
+        pid = sanitize(item.get("product_id"), 50)
+        if pid.startswith("custom-"):
+            saved = db.execute("SELECT product_name,price FROM cart WHERE user_id=? AND product_id=? AND custom=1",
+                               (user["id"], pid)).fetchone()
+            if not saved:
+                raise BadRequest("Custom item is not in your cart")
+            name, price = saved["product_name"], saved["price"]
+        else:
+            name, price = cart_product(db, pid, {})
+        qty = number(item.get("qty", 1), 1, 1000, integer=True)
+        verified_items.append({"product_id": pid, "product_name": name, "price": price, "qty": qty})
+    items = verified_items
+    subtotal = round(sum(i["price"] * i["qty"] for i in items), 2)
+    total = round(subtotal + shipping, 2)
+    ref = f"AT-{time.time_ns()}"
     db.execute(
         "INSERT INTO orders (order_ref,user_id,user_name,user_email,items,subtotal,shipping,total,payment,shipping_method,address) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (ref, user["id"], user["name"], user["email"],
@@ -608,8 +714,8 @@ def admin_add_product():
     data  = request.get_json() or {}
     name  = sanitize(data.get("name",""), 200)
     cat   = sanitize(data.get("category",""), 100)
-    price = float(data.get("price", 0))
-    stock = int(data.get("stock", 0))
+    price = number(data.get("price", 0), 0.01)
+    stock = number(data.get("stock", 0), 0, integer=True)
     desc  = sanitize(data.get("description",""), 2000)
     img   = sanitize(data.get("img_url",""), 500)
     badge = sanitize(data.get("badge",""), 50)
@@ -632,8 +738,8 @@ def admin_update_product(pid):
     if err: return err
     data  = request.get_json() or {}
     name  = sanitize(data.get("name",""), 200)
-    price = float(data.get("price", 0))
-    stock = int(data.get("stock", 0))
+    price = number(data.get("price", 0), 0.01)
+    stock = number(data.get("stock", 0), 0, integer=True)
     badge = sanitize(data.get("badge",""), 50)
     desc  = sanitize(data.get("description",""), 2000)
 
@@ -663,7 +769,6 @@ def health():
 # BOOT 
 if __name__ == "__main__":
     init_db()
-    print("\n AdjusTables API running on http://localhost:5000")
-    print("   Admin: admin@adjustables.com / admin123")
-    print("   Demo:  demo@adjustables.com  / demo123\n")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    from waitress import serve
+
+    serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
